@@ -154,8 +154,17 @@ void CreateGame(){
     LCD_Text(80, 150, "Connecting...", LCD_CYAN);
     initCC3100(Host);
 
-    int8_t initdata[10];
-    ReceiveData(initdata, 10);
+    uint8_t ack = 0;
+    uint8_t initdata[4];
+    while(ack != 37){
+        ReceiveData(&ack, 1);
+    }
+
+    ReceiveData(&initdata, 4);
+
+    uint32_t client_ip = initdata[0] << 24 | initdata[1] << 16 | initdata[2] << 8 | initdata[3];
+    ack = 44;
+    SendData(&ack, client_ip, 1);
 
     LCD_Text(190, 150, "Done!", LCD_CYAN);
 
@@ -164,7 +173,7 @@ void CreateGame(){
 
     G8RTOS_AddThread(ReadJoystickHost, 2, "Reads Joystick");
     G8RTOS_AddThread(DrawObjects, 2, "Updates Objects");
-    G8RTOS_AddThread(ReceiveDataFromClient, 1, "send data");
+    G8RTOS_AddThread(ReceiveDataFromClient, 2, "send data");
 
     //kill self
     G8RTOS_KillSelf();
@@ -184,16 +193,29 @@ void SendDataToClient(){
  */
 void ReceiveDataFromClient(){
 
-    uint8_t data[2];
+    uint8_t data[9];
+    uint16_t x_start, x_end, y_start, y_end;
 
     while(1){
         G8RTOS_WaitSemaphore(wifi_s);
-        ReceiveData(&data,2);
+        ReceiveData(data,9);
         G8RTOS_SignalSemaphore(wifi_s);
 
         if(data[0] != 0){
             asm("   nop");
+            sleep(50);
+            continue;
         }
+
+        x_start = data[1] << 8 | data[2];
+        x_end = data[3] << 8 | data[4];
+        y_start = data[5] << 8 | data[6];
+        y_end = data[7] << 8 | data[8];
+
+        G8RTOS_WaitSemaphore(&screen_s);
+        LCD_DrawRectangle(x_start, x_end, y_start, y_end, LCD_MAGENTA);
+        G8RTOS_SignalSemaphore(&screen_s);
+
 
         sleep(50);
     }
@@ -267,8 +289,14 @@ void JoinGame(){
     self.playerNumber = TOP;
     self.ready = 0;
 
-    uint8_t * self_to_send = (uint8_t*)(&self);
-    SendData(self_to_send, HOST_IP_ADDR, 10);
+    uint8_t start_send[5] = {37, (self.IP_address>>24)&0xff, (self.IP_address>>16)&0xff, (self.IP_address>>8)&0xff, (self.IP_address)&0xff};
+    uint8_t ack = 0;
+    SendData(start_send, HOST_IP_ADDR, 5);
+    while(ack != 44){
+        ReceiveData(&ack, 1);
+
+        sleep(50);
+    }
 
     LCD_Text(190, 150, "Done!", LCD_CYAN);
 
@@ -298,14 +326,14 @@ void ReceiveDataFromHost();
  */
 void SendDataToHost(){
 
-    uint8_t data[2] = {0xFF, 0x37};
+    uint8_t data[9] = {0, 0, 100, 0, 120, 0, 100, 0, 120};
 
     while(1){
         G8RTOS_WaitSemaphore(wifi_s);
-        SendData(&data, HOST_IP_ADDR, 2);
+        SendData(data, HOST_IP_ADDR, 9);
         G8RTOS_SignalSemaphore(wifi_s);
 
-        sleep(50);
+        sleep(1000);
     }
 
 }
