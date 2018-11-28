@@ -154,8 +154,13 @@ void CreateGame(){
     LCD_Text(80, 150, "Connecting...", LCD_CYAN);
     initCC3100(Host);
 
-    int8_t * initdata[10];
-    ReceiveData(initdata, 10);
+    int8_t * initdata[4];
+    ReceiveData(initdata, 4);
+    G8RTOS_WaitSemaphore(&screen_s);
+
+    LCD_DrawRectangle(initdata[0], initdata[1], initdata[2], initdata[3], LCD_CYAN);
+
+    G8RTOS_SignalSemaphore(&screen_s);
 
     LCD_Text(190, 150, "Done!", LCD_CYAN);
 
@@ -164,7 +169,7 @@ void CreateGame(){
 
     G8RTOS_AddThread(ReadJoystickHost, 2, "Reads Joystick");
     G8RTOS_AddThread(DrawObjects, 2, "Updates Objects");
-
+    G8RTOS_AddThread(ReceiveDataFromClient, 3, "Receives Data");
     //kill self
     G8RTOS_KillSelf();
 }
@@ -180,7 +185,17 @@ void SendDataToClient();
  * Thread that receives UDP packets from client
  */
 void ReceiveDataFromClient(){
+    int8_t * initdata[4];
+    int16_t counter = 0;
+    while(1){
+        ReceiveData(initdata, 4);
+        G8RTOS_WaitSemaphore(&screen_s);
 
+        LCD_DrawRectangle(initdata[0], initdata[1], initdata[2], initdata[3], LCD_MAGENTA);
+
+        G8RTOS_SignalSemaphore(&screen_s);
+        sleep(50);
+    }
 }
 
 
@@ -249,8 +264,8 @@ void JoinGame(){
     self.playerNumber = TOP;
     self.ready = 0;
 
-    uint8_t * self_to_send = (uint8_t*)(&self);
-    SendData(self_to_send, HOST_IP_ADDR, 10);
+    uint8_t test_coordinates[] = {200, 210, 200, 210};
+    SendData(test_coordinates, HOST_IP_ADDR, 4);
 
     LCD_Text(190, 150, "Done!", LCD_CYAN);
 
@@ -263,6 +278,7 @@ void JoinGame(){
 
     G8RTOS_AddThread(ReadJoystickClient, 2, "Reads Joystick");
     G8RTOS_AddThread(DrawObjects, 2, "Updates Objects");
+    G8RTOS_AddThread(SendDataToHost, 2, "Sends data to host");
 
     //kill self
     G8RTOS_KillSelf();
@@ -272,12 +288,21 @@ void JoinGame(){
 /*
  * Thread that receives game state packets from host
  */
-void ReceiveDataFromHost();
+void ReceiveDataFromHost(){
+
+}
 
 /*
  * Thread that sends UDP packets to host
  */
-void SendDataToHost();
+void SendDataToHost(){
+    uint8_t test_coordinates[] = {130, 170, 110, 130};
+    while(1){
+
+        SendData(test_coordinates, HOST_IP_ADDR, 4);
+        sleep(50);
+    }
+}
 
 /*
  * Thread to read client's joystick
