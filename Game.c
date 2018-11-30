@@ -11,6 +11,7 @@
 
 semaphore_t *screen_s;
 semaphore_t *wifi_s;
+
 char button_flag;
 uint8_t host_score;
 uint8_t client_score;
@@ -53,17 +54,18 @@ void Startup(){
     char prev_selection;
 
 
-    G8RTOS_InitSemaphore(&screen_s, 1);
+    G8RTOS_InitSemaphore(screen_s, 1);
+    G8RTOS_InitSemaphore(wifi_s, 1);
 
     //Create the startup screen
-    G8RTOS_WaitSemaphore(&screen_s);
+    G8RTOS_WaitSemaphore(screen_s);
     LCD_Clear(LCD_BLACK, MAX_SCREEN_X, MAX_SCREEN_Y);
     LCD_DrawRectangle(50, 120, 102, 132, LCD_BLUE);
     LCD_DrawRectangle(190, 260, 102, 132, LCD_RED);
     LCD_DrawRectangle(192, 258, 104, 130, LCD_BLACK);
     LCD_Text(70, 110, "HOST", LCD_RED);
     LCD_Text(202, 110, "CLIENT", LCD_BLUE);
-    G8RTOS_SignalSemaphore(&screen_s);
+    G8RTOS_SignalSemaphore(screen_s);
 
     button_flag = 0;
     selection = 2;
@@ -86,23 +88,23 @@ void Startup(){
         case 1:
             if(prev_selection != 1){
                 prev_selection = 1;
-                G8RTOS_WaitSemaphore(&screen_s);
+                G8RTOS_WaitSemaphore(screen_s);
                 LCD_DrawRectangle(52, 118, 104, 130, LCD_BLACK);
                 LCD_Text(70, 110, "HOST", LCD_RED);
                 LCD_DrawRectangle(190, 260, 102, 132, LCD_RED);
                 LCD_Text(202, 110, "CLIENT", LCD_BLUE);
-                G8RTOS_SignalSemaphore(&screen_s);
+                G8RTOS_SignalSemaphore(screen_s);
             }
             break;
         case 2:
             if(prev_selection != 2){
                 prev_selection = 2;
-                G8RTOS_WaitSemaphore(&screen_s);
+                G8RTOS_WaitSemaphore(screen_s);
                 LCD_DrawRectangle(192, 258, 104, 130, LCD_BLACK);
                 LCD_Text(202, 110, "CLIENT", LCD_BLUE);
                 LCD_DrawRectangle(50, 120, 102, 132, LCD_BLUE);
                 LCD_Text(70, 110, "HOST", LCD_RED);
-                G8RTOS_SignalSemaphore(&screen_s);
+                G8RTOS_SignalSemaphore(screen_s);
             }
             break;
         default:
@@ -124,10 +126,10 @@ void Startup(){
     }
 
     //Time to start, reset the screen
-    G8RTOS_WaitSemaphore(&screen_s);
+    G8RTOS_WaitSemaphore(screen_s);
     LCD_DrawRectangle(50, 120, 102, 132, LCD_BLACK);
     LCD_DrawRectangle(190, 260, 102, 132, LCD_BLACK);
-    G8RTOS_SignalSemaphore(&screen_s);
+    G8RTOS_SignalSemaphore(screen_s);
 
     //add functional threads
     if(player_type == Host){
@@ -149,8 +151,6 @@ void CreateGame(){
     host_score = 0;
     client_score = 0;
 
-    game.players[0].currentCenter = PADDLE_X_CENTER;
-
     LCD_Text(80, 150, "Connecting...", LCD_CYAN);
     initCC3100(Host);
 
@@ -163,8 +163,23 @@ void CreateGame(){
     ReceiveData(&initdata, 4);
 
     uint32_t client_ip = initdata[0] << 24 | initdata[1] << 16 | initdata[2] << 8 | initdata[3];
+
+    self.IP_address = client_ip;
+
     ack = 44;
     SendData(&ack, client_ip, 1);
+
+    while(ack != 0xFF){
+        ReceiveData(&ack, 1);
+    }
+
+    game.players[0].color = PLAYER_RED;
+    game.players[0].currentCenter = PADDLE_X_CENTER;
+    game.players[0].position = BOTTOM;
+
+    game.players[1].color = PLAYER_BLUE;
+    game.players[1].currentCenter = PADDLE_X_CENTER;
+    game.players[1].position = TOP;
 
     LCD_Text(190, 150, "Done!", LCD_CYAN);
 
@@ -173,7 +188,8 @@ void CreateGame(){
 
     G8RTOS_AddThread(ReadJoystickHost, 2, "Reads Joystick");
     G8RTOS_AddThread(DrawObjects, 2, "Updates Objects");
-    G8RTOS_AddThread(ReceiveDataFromClient, 2, "send data");
+    G8RTOS_AddThread(ReceiveDataFromClient, 1, "get data");
+    G8RTOS_AddThread(SendDataToClient, 2, "send data");
 
     //kill self
     G8RTOS_KillSelf();
@@ -184,7 +200,12 @@ void CreateGame(){
  * Thread that sends game state to client
  */
 void SendDataToClient(){
-
+    while(1){
+        G8RTOS_WaitSemaphore(wifi_s);
+        SendData(&game, self.IP_address, sizeof(game));
+        G8RTOS_SignalSemaphore(wifi_s);
+        sleep(20);
+    }
 }
 
 
@@ -193,31 +214,23 @@ void SendDataToClient(){
  */
 void ReceiveDataFromClient(){
 
-    uint8_t data[9];
-    uint16_t x_start, x_end, y_start, y_end;
 
     while(1){
+
         G8RTOS_WaitSemaphore(wifi_s);
-        ReceiveData(data,9);
+        ReceiveData(&self,sizeof(self));
         G8RTOS_SignalSemaphore(wifi_s);
 
-        if(data[0] != 0){
-            asm("   nop");
-            sleep(50);
-            continue;
-        }
-
-        x_start = data[1] << 8 | data[2];
-        x_end = data[3] << 8 | data[4];
-        y_start = data[5] << 8 | data[6];
-        y_end = data[7] << 8 | data[8];
-
-        G8RTOS_WaitSemaphore(&screen_s);
-        LCD_DrawRectangle(x_start, x_end, y_start, y_end, LCD_MAGENTA);
-        G8RTOS_SignalSemaphore(&screen_s);
 
 
-        sleep(50);
+
+        if(game.players[1].currentCenter + self.displacement > ARENA_MIN_X + PADDLE_LEN_D2 &&
+                        game.players[1].currentCenter + self.displacement < ARENA_MAX_X - PADDLE_LEN_D2){
+                    game.players[1].currentCenter += self.displacement;
+                }
+
+
+        sleep(20);
     }
 
 
@@ -236,16 +249,16 @@ void ReadJoystickHost(){
     while(1){
         GetJoystickCoordinates(&joyx, &joyy);
         if(joyx > 2000){
-            self.displacement = -5;
+            game.player.displacement = -5;
         } else if (joyx < -2000){
-            self.displacement = 5;
+            game.player.displacement = 5;
         } else {
-            self.displacement = 0;
+            game.player.displacement = 0;
         }
         sleep(10);
-        if(game.players[0].currentCenter + self.displacement > ARENA_MIN_X + PADDLE_LEN_D2 &&
-                game.players[0].currentCenter + self.displacement < ARENA_MAX_X - PADDLE_LEN_D2){
-            game.players[0].currentCenter += self.displacement;
+        if(game.players[0].currentCenter + game.player.displacement > ARENA_MIN_X + PADDLE_LEN_D2 &&
+                game.players[0].currentCenter + game.player.displacement < ARENA_MAX_X - PADDLE_LEN_D2){
+            game.players[0].currentCenter += game.player.displacement;
         }
         sleep(10);
     }
@@ -291,25 +304,39 @@ void JoinGame(){
 
     uint8_t start_send[5] = {37, (self.IP_address>>24)&0xff, (self.IP_address>>16)&0xff, (self.IP_address>>8)&0xff, (self.IP_address)&0xff};
     uint8_t ack = 0;
-    SendData(start_send, HOST_IP_ADDR, 5);
+
+
     while(ack != 44){
         ReceiveData(&ack, 1);
-
+        SendData(start_send, HOST_IP_ADDR, 5);
         sleep(50);
     }
+
+    ack = 0xFF;
+
+    SendData(&ack, HOST_IP_ADDR, 1);
+
+    sleep(10);
 
     LCD_Text(190, 150, "Done!", LCD_CYAN);
 
     host_score = 0;
     client_score = 0;
 
+    game.players[0].color = PLAYER_RED;
+    game.players[0].currentCenter = PADDLE_X_CENTER;
+    game.players[0].position = BOTTOM;
+
+    game.players[1].color = PLAYER_BLUE;
     game.players[1].currentCenter = PADDLE_X_CENTER;
+    game.players[1].position = TOP;
     //create the initial board
     InitBoardState();
 
     G8RTOS_AddThread(ReadJoystickClient, 2, "Reads Joystick");
     G8RTOS_AddThread(DrawObjects, 2, "Updates Objects");
-    G8RTOS_AddThread(SendDataToHost, 1, "receive data");
+    G8RTOS_AddThread(SendDataToHost, 2, "send data");
+    G8RTOS_AddThread(ReceiveDataFromHost, 1, "receive data");
 
     //kill self
     G8RTOS_KillSelf();
@@ -319,21 +346,28 @@ void JoinGame(){
 /*
  * Thread that receives game state packets from host
  */
-void ReceiveDataFromHost();
+void ReceiveDataFromHost(){
+
+    while(1){
+        G8RTOS_WaitSemaphore(wifi_s);
+        ReceiveData(&game, sizeof(game));
+        G8RTOS_SignalSemaphore(wifi_s);
+
+        sleep(20);
+    }
+
+}
 
 /*
  * Thread that sends UDP packets to host
  */
 void SendDataToHost(){
 
-    uint8_t data[9] = {0, 0, 100, 0, 120, 0, 100, 0, 120};
-
     while(1){
         G8RTOS_WaitSemaphore(wifi_s);
-        SendData(data, HOST_IP_ADDR, 9);
+        SendData(&self, HOST_IP_ADDR, sizeof(self));
         G8RTOS_SignalSemaphore(wifi_s);
-
-        sleep(1000);
+        sleep(20);
     }
 
 }
@@ -387,20 +421,16 @@ void IdleThread(){
  * Thread to draw all the objects in the game
  */
 void DrawObjects(){
-    PrevPlayer_t prev_player_loc;
-    if(player_type == Host){
-        prev_player_loc.Center = game.players[0].currentCenter;
-    } else {
-        prev_player_loc.Center = game.players[1].currentCenter;
-    }
+    PrevPlayer_t prev_player_loc, prev_player_loc2;
+
+    prev_player_loc.Center = game.players[0].currentCenter;
+    prev_player_loc2.Center = game.players[1].currentCenter;
+
 
 
     while(1){
-        if(player_type == Host){
-            UpdatePlayerOnScreen(&prev_player_loc, &(game.players[0]));
-        } else {
-            UpdatePlayerOnScreen(&prev_player_loc, &(game.players[1]));
-        }
+        UpdatePlayerOnScreen(&prev_player_loc, &(game.players[0]));
+        UpdatePlayerOnScreen(&prev_player_loc2, &(game.players[1]));
         sleep(20);
     }
 }
@@ -424,7 +454,7 @@ void MoveLEDs();
 /**********************************************************************/
 void InitBoardState(){
     char str[10];
-    G8RTOS_WaitSemaphore(&screen_s);
+    G8RTOS_WaitSemaphore(screen_s);
     //Draw the bounds
     LCD_DrawRectangle(ARENA_MIN_X, ARENA_MAX_X, ARENA_MIN_Y, ARENA_MAX_Y, LCD_WHITE);
     LCD_DrawRectangle(ARENA_MIN_X+1, ARENA_MAX_X-1, ARENA_MIN_Y, ARENA_MAX_Y, BACK_COLOR);
@@ -437,7 +467,7 @@ void InitBoardState(){
     LCD_Text(0, 0, str, LCD_BLUE);
     snprintf(str, 10, "%d", client_score);
     LCD_Text(0, 225, str, LCD_RED);
-    G8RTOS_SignalSemaphore(&screen_s);
+    G8RTOS_SignalSemaphore(screen_s);
 
 }
 
@@ -463,7 +493,7 @@ void UpdatePlayerOnScreen(PrevPlayer_t * prevPlayerIn, GeneralPlayerInfo_t * out
         return;
     }
 
-    G8RTOS_WaitSemaphore(&screen_s);
+    G8RTOS_WaitSemaphore(screen_s);
 
     if(outPlayer == &(game.players[0])){
         if(distance > 0){
@@ -491,7 +521,7 @@ void UpdatePlayerOnScreen(PrevPlayer_t * prevPlayerIn, GeneralPlayerInfo_t * out
         }
     }
 
-    G8RTOS_SignalSemaphore(&screen_s);
+    G8RTOS_SignalSemaphore(screen_s);
 
     prevPlayerIn->Center = outPlayer->currentCenter;
 }
@@ -507,8 +537,3 @@ void UpdateBallOnScreen(PrevBall_t * previousBall, Ball_t * currentBall, uint16_
 /**********************************************************************/
 /*                       End of Public Functions                      */
 /**********************************************************************/
-
-
-
-
-
