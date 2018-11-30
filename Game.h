@@ -138,7 +138,10 @@ typedef struct
 {
     int16_t currentCenterX;
     int16_t currentCenterY;
+    int16_t velocityX;
+    int16_t velocityY;
     uint16_t color;
+    uint32_t threadId;
     bool alive;
 } Ball_t;
 
@@ -295,6 +298,9 @@ void UpdateBallOnScreen(PrevBall_t * previousBall, Ball_t * currentBall, uint16_
  * Initializes and prints initial game state
  */
 void InitBoardState();
+
+
+void KillBall(Ball_t * currentBall);
 
 /*********************************************** Public Functions *********************************************************************/
 
